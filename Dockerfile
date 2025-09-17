@@ -1,9 +1,10 @@
 FROM php:latest
 LABEL anonymous="true"
-LABEL name="sfphphello"
+LABEL non_web="true"
+LABEL idle_timeout="-1"
+LABEL name="Php Workitem Agent"
 LABEL description="PHP serverless hello world function"
 COPY . /app
 WORKDIR /app
 RUN composer install --no-dev --optimize-autoloader
-EXPOSE 3000
 ENTRYPOINT ["php", "/app/main.php"]

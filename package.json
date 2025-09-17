@@ -1,5 +1,5 @@
 {
-    "name": "sfphphello",
+    "name": "phpworkitemagent",
     "version": "0.0.1",
     "description": "PHP serverless hello world function",
     "main": "main.php",
