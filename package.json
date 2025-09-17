@@ -1,0 +1,20 @@
+{
+    "name": "sfphphello",
+    "version": "0.0.1",
+    "description": "PHP serverless hello world function",
+    "main": "main.php",
+    "author": "OpenIAP ApS / Allan Zimmermann",
+    "license": "MPL-2.0",
+    "openiap": {
+        "daemon": true,
+        "chromium": false,
+        "language": "php",
+        "typescript": false
+    },
+    "scripts": {
+        "start": "php main.php"
+    },
+    "keywords": [],
+    "dependencies": {
+    }
+}

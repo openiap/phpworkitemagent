@@ -1,0 +1,18 @@
+{
+    "version": "0.1.0",
+    "configurations": [
+        {
+            "type": "php",
+            "request": "launch",
+            "name": "Run main",
+            "console": "integratedTerminal",
+            "program": "${workspaceFolder}/main.php",
+            "envFile": "${workspaceFolder}/.env",
+            "resolveSourceMapLocations": [
+                "${workspaceFolder}/**",
+                "!**/node_modules/**",
+                "**/node_modules/@openiap/**"
+            ]
+        }
+    ]
+}
