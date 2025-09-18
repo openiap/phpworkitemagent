@@ -5,87 +5,41 @@ declare(strict_types=1);
 error_reporting(E_ALL);
 ini_set('display_errors', '1');
 set_time_limit(0);
+ini_set('log_errors', '1');
+ini_set('error_log', 'php://stderr');
 
-// Minimal OpenIAP-like client shim for PHP to mirror the Node.js flow.
-// Replace internals with real API calls if/when a PHP SDK is available.
-class Client
-{
-    private array $eventHandlers = [];
-    private bool $dummyWorkitemProvided = false;
+// Early boot log to verify container starts
+fwrite(STDOUT, "[BOOT] Starting Php Workitem Agent\n");
+fflush(STDOUT);
 
-    public function enable_tracing(string $level, string $tags = ''): void
-    {
-        $this->info("Tracing enabled: level={$level} tags={$tags}");
+// Crash visibility
+set_exception_handler(function (Throwable $e) {
+    fwrite(STDERR, "[EXCEPTION] " . $e->getMessage() . "\n");
+    fwrite(STDERR, $e->getTraceAsString() . "\n");
+    fflush(STDERR);
+});
+register_shutdown_function(function () {
+    $e = error_get_last();
+    if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+        fwrite(STDERR, "[FATAL] {$e['message']} in {$e['file']}:{$e['line']}\n");
+        fflush(STDERR);
     }
+});
 
-    public function connect(): void
-    {
-        // Simulate immediate sign-in success
-        $this->info('Connecting to OpenIAP...');
-        $this->emitClientEvent(['event' => 'SignedIn']);
-    }
+// Load Composer dependencies
+ require_once __DIR__ . '/vendor/autoload.php';
 
-    public function on_client_event(callable $handler): void
-    {
-        $this->eventHandlers[] = $handler;
-    }
+// OpenIAP client will be loaded from composer autoload
 
-    public function register_queue(array $opts, callable $onMessage): string
-    {
-        $queue = $opts['queuename'] ?? 'default_queue';
-        $this->info("Registered queue consumer for '{$queue}'");
-        // In real implementation, this would subscribe and invoke $onMessage when messages arrive.
-        return $queue;
-    }
-
-    public function pop_workitem(array $opts): ?array
-    {
-        // Placeholder: integrate with OpenIAP to pop a real workitem
-        // For local smoke testing, provide a single dummy workitem when DUMMY_WORKITEM=1
-        $wiq = $opts['wiq'] ?? 'default_queue';
-        if (getenv('DUMMY_WORKITEM') === '1' && !$this->dummyWorkitemProvided) {
-            $this->dummyWorkitemProvided = true;
-            $this->info("Popping dummy workitem from {$wiq}");
-            return [
-                'id' => uniqid('wi_', true),
-                'retries' => 0,
-                'payload' => ['initial' => true],
-                'state' => 'new',
-                'name' => 'dummy'
-            ];
-        }
-        return null;
-    }
-
-    public function update_workitem(array $opts): void
-    {
-        // Expecting shape: [ 'workitem' => array, 'files' => array<string>? ]
-        $hasFiles = isset($opts['files']) && is_array($opts['files']) && count($opts['files']) > 0;
-        $id = $opts['workitem']['id'] ?? '(unknown)';
-        $state = $opts['workitem']['state'] ?? '(no state)';
-        $this->info("Updated workitem {$id} with state '{$state}'" . ($hasFiles ? ' and files' : ''));
-    }
-
-    public function info(string $msg): void
-    {
-        fwrite(STDOUT, "[INFO] {$msg}\n");
-    }
-
-    public function error(string $msg): void
-    {
-        fwrite(STDERR, "[ERROR] {$msg}\n");
-    }
-
-    private function emitClientEvent(array $event): void
-    {
-        foreach ($this->eventHandlers as $handler) {
-            try {
-                $handler($event);
-            } catch (\Throwable $e) {
-                $this->error('Client event handler error: ' . $e->getMessage());
-            }
-        }
-    }
+// Bind the OpenIAP PHP Client class name to `Client` to mirror Node.js usage
+if (class_exists('OpenIAP\Client')) {
+    class_alias('OpenIAP\Client', 'Client');
+} elseif (class_exists('OpenIAP\SDK\Client')) {
+    class_alias('OpenIAP\SDK\Client', 'Client');
+} elseif (class_exists('openiap\client\Client')) {
+    class_alias('openiap\client\Client', 'Client');
+} else {
+    throw new RuntimeException('OpenIAP PHP client not found (openiap/client).');
 }
 
 // Utility: list files in current directory (files only)
@@ -123,47 +77,7 @@ function cleanupFiles(array $originalFiles): void
     }
 }
 
-// Business logic equivalent to Node's ProcessWorkitem
-function ProcessWorkitem(Client $client, array &$workitem): void
-{
-    $id = $workitem['id'] ?? '(unknown)';
-    $retries = (int)($workitem['retries'] ?? 0);
-    $client->info("Processing workitem id {$id}, retry #{$retries}");
-
-    if (!isset($workitem['payload']) || !is_array($workitem['payload'])) {
-        $workitem['payload'] = [];
-    }
-    $workitem['payload']['name'] = 'Hello kitty';
-    $workitem['name'] = 'Hello kitty';
-
-    // Simulate producing an output file
-    file_put_contents(__DIR__ . DIRECTORY_SEPARATOR . 'hello.txt', 'Hello kitty');
-
-    // Simulate async processing delay
-    usleep(2_000_000); // 2 seconds
-}
-
-function ProcessWorkitemWrapper(Client $client, array $originalFiles, array $workitem): void
-{
-    try {
-        ProcessWorkitem($client, $workitem);
-        $workitem['state'] = 'successful';
-    } catch (\Throwable $error) {
-        $workitem['state'] = 'retry';
-        $workitem['errortype'] = 'application';
-        $workitem['errormessage'] = $error->getMessage();
-        $workitem['errorsource'] = $error->getTraceAsString();
-        $client->error($error->getMessage());
-    }
-
-    $currentFiles = lstat_dir(__DIR__);
-    $filesAdd = array_values(array_diff($currentFiles, $originalFiles));
-    if (count($filesAdd) > 0) {
-        $client->update_workitem(['workitem' => $workitem, 'files' => $filesAdd]);
-    } else {
-        $client->update_workitem(['workitem' => $workitem]);
-    }
-}
+// Keep helpers minimal; mirror Node structure by inlining queue resolution and processing
 
 $originalFiles = [];
 $working = false;
@@ -176,16 +90,47 @@ function on_queue_message(Client $client): void
     }
     $working = true;
     try {
-        $defaultwiq = 'default_queue';
-        $wiq = getenv('wiq') ?: (getenv('SF_AMQPQUEUE') ?: $defaultwiq);
+        // Node semantics
+        $wiq = getenv('wiq') ?: (getenv('SF_AMQPQUEUE') ?: 'default_queue');
         $queue = getenv('queue') ?: $wiq;
+        $client->info("Resolved queues: wiq={$wiq}, queue={$queue}");
 
         $counter = 0;
         do {
             $workitem = $client->pop_workitem(['wiq' => $wiq]);
             if ($workitem) {
                 $counter++;
-                ProcessWorkitemWrapper($client, $originalFiles, $workitem);
+                // Inline ProcessWorkitem + wrapper
+                try {
+                    $id = $workitem['id'] ?? '(unknown)';
+                    $retries = (int)($workitem['retries'] ?? 0);
+                    $client->info("Processing workitem id {$id}, retry #{$retries}");
+
+                    if (!isset($workitem['payload']) || !is_array($workitem['payload'])) {
+                        $workitem['payload'] = [];
+                    }
+                    $workitem['payload']['name'] = 'Hello kitty';
+                    $workitem['name'] = 'Hello kitty';
+
+                    file_put_contents(__DIR__ . DIRECTORY_SEPARATOR . 'hello.txt', 'Hello kitty');
+                    usleep(2_000_000); // 2s
+
+                    $workitem['state'] = 'successful';
+                } catch (\Throwable $error) {
+                    $workitem['state'] = 'retry';
+                    $workitem['errortype'] = 'application';
+                    $workitem['errormessage'] = $error->getMessage();
+                    $workitem['errorsource'] = $error->getTraceAsString();
+                    $client->error($error->getMessage());
+                }
+
+                $currentFiles = lstat_dir(__DIR__);
+                $filesAdd = array_values(array_diff($currentFiles, $originalFiles));
+                if (count($filesAdd) > 0) {
+                    $client->update_workitem(['workitem' => $workitem, 'files' => $filesAdd]);
+                } else {
+                    $client->update_workitem(['workitem' => $workitem]);
+                }
                 cleanupFiles($originalFiles);
             }
         } while ($workitem);
@@ -210,9 +155,10 @@ function on_queue_message(Client $client): void
 function onConnected(Client $client): void
 {
     try {
-        $defaultwiq = 'default_queue';
-        $wiq = getenv('wiq') ?: (getenv('SF_AMQPQUEUE') ?: $defaultwiq);
+        $wiq = getenv('wiq') ?: (getenv('SF_AMQPQUEUE') ?: 'default_queue');
         $queue = getenv('queue') ?: $wiq;
+        $client->info("Resolved queues: wiq={$wiq}, queue={$queue}");
+        $client->info("Registering queue consumer for: {$queue}");
         $queuename = $client->register_queue(['queuename' => $queue], function () use ($client) {
             on_queue_message($client);
         });
